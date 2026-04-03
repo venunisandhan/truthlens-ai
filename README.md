@@ -160,7 +160,7 @@ Create a `.env` in `backend/`
 
 ```env
 NEWS_API_KEY=your_key_here
-# MEDIASTACK_API_KEY, etc.
+# MEDIASTACK_API_KEY,# GNEWS_API_KEY, #THENEWSAPI_KEY etc.
 ```
 
 **Run Server:**
