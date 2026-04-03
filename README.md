@@ -159,7 +159,6 @@ pip install -r requirements.txt
 Create a `.env` in `backend/`
 
 ```env
-GEMINI_API_KEY=your_key_here
 NEWS_API_KEY=your_key_here
 # MEDIASTACK_API_KEY, etc.
 ```
