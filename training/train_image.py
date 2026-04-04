@@ -2,13 +2,14 @@ import os
 import torch
 from datasets import load_dataset
 from transformers import (
-    AutoFeatureExtractor, 
-    AutoModelForAudioClassification, 
+    AutoImageProcessor, 
+    AutoModelForImageClassification, 
     TrainingArguments, 
     Trainer
 )
 import evaluate
 import numpy as np
+from torchvision.transforms import RandomResizedCrop, Compose, Normalize, ToTensor
 
 def compute_metrics(eval_pred):
     metric = evaluate.load("accuracy")
@@ -17,50 +18,53 @@ def compute_metrics(eval_pred):
     return metric.compute(predictions=predictions, references=labels)
 
 def main():
-    # Replace this dataset with your specific Audio Deepfake binary classification dataset
-    # The dataset MUST have an 'audio' generic column and a 'label' column.
-    print("[INFO] Loading audio dataset...")
+    # Replace this dataset with your specific Vision Deepfake dataset
+    print("[INFO] Loading image dataset...")
     try:
-        # Example dataset placeholder
-        dataset = load_dataset("minoosh/IEMOCAP_audio") # Replace with your deepfake audio dataset
+        # Example dataset placeholder 
+        dataset = load_dataset("dima806/deepfake_faces") # Example Binary image dataset
     except Exception as e:
         print(f"[WARNING] Could not load demo dataset. Error: {e}")
-        print("[WARNING] Please modify line 24 to use your actual Deepfake voice cloning dataset.")
+        print("[WARNING] Please modify line 25 to use your actual Deepfake Image dataset.")
         return
 
-    # Assuming 2 labels: FAKE and REAL
+    # Determine labels depending on your dataset mapping
     id2label = {0: "FAKE", 1: "REAL"}
     label2id = {"FAKE": 0, "REAL": 1}
 
     # Use the pre-trained model listed in README.md!
-    model_name = "mo-thecreator/Deepfake-audio-detection"
-    print(f"[INFO] Loading feature extractor: {model_name}")
-    feature_extractor = AutoFeatureExtractor.from_pretrained(model_name)
+    model_name = "prithivMLmods/Deep-Fake-Detector-v2-Model"
+    print(f"[INFO] Loading image processor: {model_name}")
+    image_processor = AutoImageProcessor.from_pretrained(model_name)
+
+    # Basic image augmentation / transforms
+    normalize = Normalize(mean=image_processor.image_mean, std=image_processor.image_std)
+    size = (
+        image_processor.size["shortest_edge"]
+        if "shortest_edge" in image_processor.size
+        else (image_processor.size["height"], image_processor.size["width"])
+    )
+    _transforms = Compose([RandomResizedCrop(size), ToTensor(), normalize])
 
     def preprocess_function(examples):
-        audio_arrays = [x["array"] for x in examples["audio"]]
-        inputs = feature_extractor(
-            audio_arrays, 
-            sampling_rate=feature_extractor.sampling_rate, 
-            max_length=16000, 
-            truncation=True
-        )
-        return inputs
+        examples["pixel_values"] = [_transforms(img.convert("RGB")) for img in examples["image"]]
+        del examples["image"]
+        return examples
 
     print("[INFO] Preprocessing dataset...")
-    # NOTE: Selecting a subset for demonstration/speed. Remove `.select()` for full training.
     try:
+        # NOTE: Selecting a subset for demonstration/speed. Remove `.select()` for full training.
         small_train = dataset["train"].shuffle(seed=42).select(range(500))
         small_eval = dataset["test"].shuffle(seed=42).select(range(100))
         
-        encoded_train = small_train.map(preprocess_function, remove_columns="audio", batched=True)
-        encoded_eval = small_eval.map(preprocess_function, remove_columns="audio", batched=True)
+        encoded_train = small_train.with_transform(preprocess_function)
+        encoded_eval = small_eval.with_transform(preprocess_function)
     except Exception:
         print("[WARNING] Dataset structure didn't match expectations. Adjust preprocessing accordingly.")
         return
 
     print(f"[INFO] Loading fine-tune base model: {model_name}")
-    model = AutoModelForAudioClassification.from_pretrained(
+    model = AutoModelForImageClassification.from_pretrained(
         model_name, 
         num_labels=2,
         ignore_mismatched_sizes=True,
@@ -68,7 +72,7 @@ def main():
         label2id=label2id
     )
 
-    output_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "outputs", "audio_model"))
+    output_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "outputs", "image_model"))
     os.makedirs(output_dir, exist_ok=True)
 
     if torch.cuda.is_available():
@@ -82,13 +86,14 @@ def main():
         batch_size = 4
 
     training_args = TrainingArguments(
-        output_dir="./tmp_audio_trainer",
+        output_dir="./tmp_image_trainer",
         evaluation_strategy="epoch",
-        learning_rate=3e-5,
+        learning_rate=5e-5,
         per_device_train_batch_size=batch_size,
         per_device_eval_batch_size=batch_size,
         num_train_epochs=3,
         weight_decay=0.01,
+        remove_unused_columns=False,
         push_to_hub=False,
     )
 
@@ -100,13 +105,13 @@ def main():
         compute_metrics=compute_metrics,
     )
 
-    print("[INFO] Starting audio training phase...")
+    print("[INFO] Starting image training phase...")
     trainer.train()
 
     print(f"\n[INFO] Training complete. Saving model to {output_dir}")
     model.save_pretrained(output_dir)
-    feature_extractor.save_pretrained(output_dir)
-    print("[INFO] 🚀 Successfully saved! The TruthLens backend will now use your locally trained AUDIO model automatically!")
+    image_processor.save_pretrained(output_dir)
+    print("[INFO] 🚀 Successfully saved! The TruthLens backend will now use your locally trained IMAGE model automatically!")
 
 if __name__ == "__main__":
     main()
