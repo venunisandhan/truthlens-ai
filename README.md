@@ -18,7 +18,6 @@ TruthLens AI is a production-grade AI platform designed to detect misinformation
   - [2. Image Analysis (Vision Deepfake Detection)](#2-image-analysis-vision-deepfake-detection)
   - [3. Audio Analysis (Voice Cloning Detection)](#3-audio-analysis-voice-cloning-detection)
   - [4. Video Orchestration (Multi-modal Aggregation)](#4-video-orchestration-multi-modal-aggregation)
-- [The Hidden Verification Layer (Gemini)](#the-hidden-verification-layer-gemini)
 - [Development Setup](#development-setup)
 - [Deployment Guide](#deployment-guide)
 
