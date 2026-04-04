@@ -68,3 +68,16 @@ async def analyze_image(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="Image too large, max 20MB")
     result = await detect_image(file_bytes)
     return result
+
+@app.post("/api/v1/detect/video")
+async def analyze_video(file: UploadFile = File(...)):
+    if not file.content_type.startswith("video/"):
+        raise HTTPException(status_code=400, detail="File must be a video")
+    file_bytes = await file.read()
+    if len(file_bytes) > 200 * 1024 * 1024:  # 200MB limit
+        raise HTTPException(status_code=400, detail="Video too large, max 200MB")
+    result = await detect_video(file_bytes, file.filename)
+    return result
+
+if __name__ == "__main__":
+    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
