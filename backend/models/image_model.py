@@ -1,8 +1,47 @@
 import asyncio
 import io
+import os
 from PIL import Image, ImageChops, ImageEnhance
 import numpy as np
+from transformers import pipeline
 from utils.gemini import verify_media_with_gemini
+
+LOCAL_IMAGE_MODEL = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../training/outputs/image_model"))
+HF_IMAGE_MODEL = os.getenv("HF_IMAGE_MODEL", "prithivMLmods/Deep-Fake-Detector-v2-Model")
+
+class ImageDetector:
+    def __init__(self):
+        model_path = LOCAL_IMAGE_MODEL if os.path.exists(LOCAL_IMAGE_MODEL) else HF_IMAGE_MODEL
+        print(f"[IMAGE] Loading Vision model: {model_path}")
+        self.classifier = pipeline("image-classification", model=model_path)
+        print("[IMAGE] Model loaded.")
+
+    def predict(self, image: Image.Image) -> dict:
+        try:
+            results = self.classifier(image)
+        except Exception as e:
+            print(f"[IMAGE ML ERROR] {e}")
+            return {"real_score": 0.5, "fake_score": 0.5}
+
+        real_score = 0.0
+        fake_score = 0.0
+        for r in results:
+            lbl = str(r["label"]).upper()
+            if lbl in ["REAL", "HUMAN", "LABEL_0"]:
+                real_score = float(r["score"])
+            else:
+                fake_score = float(r["score"])
+        
+        if real_score == 0 and fake_score == 0:
+            real_score, fake_score = 0.5, 0.5
+        elif real_score == 0:
+            real_score = 1.0 - fake_score
+        elif fake_score == 0:
+            fake_score = 1.0 - real_score
+            
+        return {"real_score": real_score, "fake_score": fake_score}
+
+_detector: ImageDetector = None
 
 
 def ela_analysis(image_bytes: bytes) -> float:
@@ -29,11 +68,25 @@ def ela_analysis(image_bytes: bytes) -> float:
 
 
 async def detect_image(image_bytes: bytes) -> dict:
+    global _detector
+    if _detector is None:
+        _detector = ImageDetector()
+
     loop = asyncio.get_event_loop()
 
+    # ELA
     ela_score          = await loop.run_in_executor(None, ela_analysis, image_bytes)
-    authenticity_score = (1.0 - ela_score) * 100
-    fake_score         = ela_score * 100
+    ela_auth           = (1.0 - ela_score)
+    ela_fake           = ela_score
+
+    # ML
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    ml_result = await loop.run_in_executor(None, _detector.predict, img)
+    vit_auth = ml_result["real_score"]
+    vit_fake = ml_result["fake_score"]
+
+    authenticity_score = ((vit_auth * 0.7) + (ela_auth * 0.3)) * 100
+    fake_score = ((vit_fake * 0.7) + (ela_fake * 0.3)) * 100
     confidence_score   = max(authenticity_score, fake_score)
 
     if authenticity_score > 75:
@@ -74,7 +127,9 @@ async def detect_image(image_bytes: bytes) -> dict:
         "explanation":        explanation,
         "details": {
             "top_classification":     classification,
-            "ela_manipulation_score": round(fake_score, 2),
-            "ela_authentic_score":    round(authenticity_score, 2),
+            "ela_manipulation_score": round(ela_fake * 100, 2),
+            "ela_authentic_score":    round(ela_auth * 100, 2),
+            "vit_manipulation_score": round(vit_fake * 100, 2),
+            "vit_authentic_score":    round(vit_auth * 100, 2),
         }
     }

@@ -7,15 +7,17 @@ from utils.gemini import verify_media_with_gemini
 
 load_dotenv()
 
-HF_AUDIO_MODEL = os.getenv("HF_AUDIO_MODEL", "your-hf-username/truthlens-audio-deepfake-detector")
+LOCAL_AUDIO_MODEL = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../training/outputs/audio_model"))
+HF_AUDIO_MODEL = os.getenv("HF_AUDIO_MODEL", "mo-thecreator/Deepfake-audio-detection")
 
 
 class AudioDetector:
     def __init__(self):
-        print(f"[AUDIO] Loading model: {HF_AUDIO_MODEL}")
+        model_path = LOCAL_AUDIO_MODEL if os.path.exists(LOCAL_AUDIO_MODEL) else HF_AUDIO_MODEL
+        print(f"[AUDIO] Loading model: {model_path}")
         self.classifier = pipeline(
             "audio-classification",
-            model=HF_AUDIO_MODEL,
+            model=model_path,
         )
         print("[AUDIO] Model loaded.")
 

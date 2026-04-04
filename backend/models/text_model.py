@@ -15,7 +15,10 @@ NEWS_API_KEY       = os.getenv("NEWS_API_KEY")
 GNEWS_API_KEY      = os.getenv("GNEWS_API_KEY")
 MEDIASTACK_API_KEY = os.getenv("MEDIASTACK_API_KEY")
 THENEWSAPI_KEY     = os.getenv("THENEWSAPI_KEY")
-HF_TEXT_MODEL      = os.getenv("HF_TEXT_MODEL", "your-hf-username/truthlens-fakenews-detector")
+
+LOCAL_TEXT_MODEL = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../training/outputs/text_model"))
+HF_TEXT_MODEL = os.getenv("HF_TEXT_MODEL", "hamzab/roberta-fake-news-classification")
+HF_AI_DETECTOR = "roberta-base-openai-detector"
 
 TRUSTED_SOURCES = [
     "bbc", "reuters", "cnn", "new york times", "the guardian",
@@ -125,13 +128,22 @@ async def search_news_apis(query: str) -> list:
 
 class TextDetector:
     def __init__(self):
-        print(f"[TEXT] Loading model: {HF_TEXT_MODEL}")
+        fake_news_model = LOCAL_TEXT_MODEL if os.path.exists(LOCAL_TEXT_MODEL) else HF_TEXT_MODEL
+        print(f"[TEXT] Loading Fake News model: {fake_news_model}")
         self.classifier = pipeline(
             "text-classification",
-            model=HF_TEXT_MODEL,
+            model=fake_news_model,
             truncation=True,
             max_length=512
         )
+        print(f"[TEXT] Loading AI Detector: {HF_AI_DETECTOR}")
+        self.ai_detector = pipeline(
+            "text-classification",
+            model=HF_AI_DETECTOR,
+            truncation=True,
+            max_length=512
+        )
+        print("[TEXT] Loading NLI model: roberta-large-mnli")
         self.nli = pipeline(
             "text-classification",
             model="roberta-large-mnli"
@@ -140,17 +152,33 @@ class TextDetector:
 
     def predict(self, text: str) -> dict:
         result = self.classifier(text[:512])[0]
-        label  = result["label"].upper()
+        label  = str(result["label"]).upper()
         score  = float(result["score"])
 
-        if label == "REAL":
+        if label in ["REAL", "LABEL_0", "TRUE", "HUMAN"]:
             real_score = score
             fake_score = 1.0 - score
         else:
             fake_score = score
             real_score = 1.0 - score
 
-        return {"real_score": real_score, "fake_score": fake_score}
+        ai_result = self.ai_detector(text[:512])[0]
+        ai_label = str(ai_result["label"]).upper()
+        ai_score = float(ai_result["score"])
+
+        if ai_label in ["REAL", "HUMAN", "LABEL_0"]:
+            human_score = ai_score
+            ai_gen_score = 1.0 - ai_score
+        else:
+            ai_gen_score = ai_score
+            human_score = 1.0 - ai_score
+
+        return {
+            "real_score": real_score, 
+            "fake_score": fake_score,
+            "human_score": human_score,
+            "ai_gen_score": ai_gen_score
+        }
 
     def check_entailment(self, claim: str, articles: list) -> dict:
         if not articles:
@@ -203,6 +231,8 @@ async def detect_text(text: str) -> dict:
     ml_result  = await loop.run_in_executor(None, _detector.predict, text)
     real_score = ml_result["real_score"]
     fake_score = ml_result["fake_score"]
+    human_score = ml_result["human_score"]
+    ai_gen_score = ml_result["ai_gen_score"]
 
     query    = extract_keywords(text)
     articles = await search_news_apis(query)
@@ -212,9 +242,9 @@ async def detect_text(text: str) -> dict:
     contradiction = nli_result["contradiction"]
     article_count = len(articles)
 
-    authenticity_score = real_score * 100
-    confidence_score   = max(real_score, fake_score) * 100
-    top_classification = "Real" if real_score > fake_score else "Fake"
+    authenticity_score = ((real_score * 0.7) + (human_score * 0.3)) * 100
+    confidence_score   = max(max(real_score, fake_score), max(human_score, ai_gen_score)) * 100
+    top_classification = "Real" if authenticity_score > 50 else "Fake"
 
     if authenticity_score > 70:
         explanation = "The text structure and semantics align with factual, objective reporting."
@@ -303,6 +333,8 @@ async def detect_text(text: str) -> dict:
             "top_classification":  top_classification,
             "real_probability":    round(real_score * 100, 2),
             "fake_probability":    round(fake_score * 100, 2),
+            "human_probability":   round(human_score * 100, 2),
+            "ai_gen_probability":  round(ai_gen_score * 100, 2),
             "news_articles_found": article_count,
             "nli_entailment":      entailment,
             "nli_contradiction":   contradiction,
